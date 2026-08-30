@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+    <defs>
+      <pattern id="halftone" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+        <circle cx="10" cy="10" r="4" fill="#000000" opacity="0.15" />
+      </pattern>
+    </defs>
+
+    <!-- Outer Bold Black Ink Comic Border -->
+    <rect x="0" y="0" width="1920" height="70" fill="#ffe600" stroke="#000000" stroke-width="8" />
+    <rect x="0" y="0" width="1920" height="70" fill="url(#halftone)" />
+    <text x="960" y="48" fill="#000000" font-family="'Impact', 'Arial Black', sans-serif" font-size="36" font-weight="900" letter-spacing="4" text-anchor="middle">★ PTI MANGA ACTION PHOTOBOOTH ★</text>
+
+    <!-- Bottom Comic Bar -->
+    <rect x="0" y="1010" width="1920" height="70" fill="#00f0ff" stroke="#000000" stroke-width="8" />
+    <rect x="0" y="1010" width="1920" height="70" fill="url(#halftone)" />
+    <text x="960" y="1058" fill="#000000" font-family="'Impact', 'Arial Black', sans-serif" font-size="32" font-weight="900" letter-spacing="3" text-anchor="middle">POW! • BEMP PTI UNJ 2026 • BOOM!</text>
+
+    <!-- Left & Right Bold Comic Frame Borders -->
+    <line x1="20" y1="0" x2="20" y2="1080" stroke="#000000" stroke-width="12" />
+    <line x1="1900" y1="0" x2="1900" y2="1080" stroke="#000000" stroke-width="12" />
+
+    <!-- Comic Action Speech Bubble on Top Right -->
+    <polygon points="1760,20 1880,10 1860,110 1780,120 1750,140 1760,100" fill="#ff0055" stroke="#000000" stroke-width="4" />
+    <text x="1815" y="75" fill="#ffffff" font-family="'Impact', sans-serif" font-size="28" font-weight="bold" text-anchor="middle" transform="rotate(-6, 1815, 75)">POW!</text>
+  </svg>

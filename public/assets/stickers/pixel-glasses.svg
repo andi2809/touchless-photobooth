@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 256" width="512" height="256">
+    <!-- 8-Bit Pixel Thug Life Glasses -->
+    <rect x="40" y="60" width="180" height="120" fill="#000000" />
+    <rect x="292" y="60" width="180" height="120" fill="#000000" />
+    <rect x="220" y="80" width="72" height="30" fill="#000000" />
+    
+    <!-- White Pixel Reflections -->
+    <rect x="60" y="80" width="30" height="30" fill="#ffffff" />
+    <rect x="90" y="110" width="30" height="30" fill="#ffffff" />
+    <rect x="312" y="80" width="30" height="30" fill="#ffffff" />
+    <rect x="342" y="110" width="30" height="30" fill="#ffffff" />
+  </svg>

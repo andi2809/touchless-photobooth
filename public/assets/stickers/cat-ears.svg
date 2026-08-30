@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 300" width="512" height="300">
+    <defs>
+      <filter id="catGlow">
+        <feGaussianBlur stdDeviation="6" result="glow"/>
+        <feMerge>
+          <feMergeNode in="glow"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+    <!-- Headband -->
+    <path d="M 60 260 A 200 200 0 0 1 452 260" fill="none" stroke="#ff007f" stroke-width="12" filter="url(#catGlow)" />
+    <!-- Left Ear -->
+    <polygon points="100,220 50,40 220,130" fill="#1e1035" stroke="#ff007f" stroke-width="10" filter="url(#catGlow)" />
+    <polygon points="105,190 75,75 185,135" fill="#ff66cc" />
+    <!-- Right Ear -->
+    <polygon points="412,220 462,40 292,130" fill="#1e1035" stroke="#ff007f" stroke-width="10" filter="url(#catGlow)" />
+    <polygon points="407,190 437,75 327,135" fill="#ff66cc" />
+  </svg>
