@@ -1,121 +1,168 @@
-'use client';
-
-import React from 'react';
-import { X, Crop, PenTool, Hand, Sparkles, ThumbsUp, CheckCircle2 } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { X } from 'lucide-react';
 
 interface GestureGuideModalProps {
   isOpen: boolean;
   onClose: () => void;
+  autoCloseSeconds?: number;
 }
 
-export const GestureGuideModal: React.FC<GestureGuideModalProps> = ({ isOpen, onClose }) => {
+export const GestureGuideModal: React.FC<GestureGuideModalProps> = ({
+  isOpen,
+  onClose,
+  autoCloseSeconds = 10,
+}) => {
+  const [secondsLeft, setSecondsLeft] = useState<number>(autoCloseSeconds);
+  const wasOpenRef = useRef<boolean>(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Uninterrupted 10s Countdown Timer (Starts once upon modal opening)
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      wasOpenRef.current = true;
+      setSecondsLeft(autoCloseSeconds);
+
+      const interval = setInterval(() => {
+        setSecondsLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            onCloseRef.current();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => {
+        clearInterval(interval);
+      };
+    } else if (!isOpen) {
+      wasOpenRef.current = false;
+    }
+  }, [isOpen, autoCloseSeconds]);
+
   if (!isOpen) return null;
 
-  const guides = [
-    {
-      title: '1. Frame Capture (Fokus & Shutter)',
-      description: 'Bentuk kotak bingkai menggunakan 2 tangan (jempol & telunjuk). Tahan selama 3 detik untuk memicu countdown & foto otomatis dengan efek latar belakang blur bokeh.',
-      icon: <Crop className="w-6 h-6 text-neon-cyan" />,
-      tag: 'Tahan 3 Detik',
-      borderColor: 'border-cyan-500/40',
-      bgGlow: 'from-cyan-950/40 to-slate-900/60',
-    },
-    {
-      title: '2. Air Drawing (Melukis Neon di Udara)',
-      description: 'Acungkan hanya 1 jari telunjuk (lipat jari lainnya) dan gerakkan di udara untuk melukis garis neon bercahaya di layar.',
-      icon: <PenTool className="w-6 h-6 text-neon-pink" />,
-      tag: '1 Jari Telunjuk',
-      borderColor: 'border-pink-500/40',
-      bgGlow: 'from-pink-950/40 to-slate-900/60',
-    },
-    {
-      title: '3. Hapus Coretan (Wipe Canvas)',
-      description: 'Buka seluruh 5 jari telapak tangan menghadap kamera untuk menghapus seluruh coretan neon dan mereset timer.',
-      icon: <Hand className="w-6 h-6 text-amber-400" />,
-      tag: 'Telapak Terbuka',
-      borderColor: 'border-amber-500/40',
-      bgGlow: 'from-amber-950/40 to-slate-900/60',
-    },
-    {
-      title: '4. Peace Sign (✌️ Peace Blur)',
-      description: 'Bentuk pose 2 jari (Peace) untuk mengaktifkan efek instan pose legendaris PTI BEMP.',
-      icon: <Sparkles className="w-6 h-6 text-neon-green" />,
-      tag: 'Pose 2 Jari',
-      borderColor: 'border-emerald-500/40',
-      bgGlow: 'from-emerald-950/40 to-slate-900/60',
-    },
-    {
-      title: '5. Thumbs Up (👍 Pose Mantap)',
-      description: 'Acungkan jempol untuk memicu konfirmasi atau pose ikonik.',
-      icon: <ThumbsUp className="w-6 h-6 text-neon-gold" />,
-      tag: 'Jempol',
-      borderColor: 'border-yellow-500/40',
-      bgGlow: 'from-yellow-950/40 to-slate-900/60',
-    },
-  ];
+  const progressPercent = (secondsLeft / autoCloseSeconds) * 100;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-slate-950 border border-slate-700/80 rounded-3xl p-6 shadow-2xl text-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in select-none">
+      <div className="relative max-w-3xl w-full bg-[#FFFDF9] text-slate-900 border-3 border-slate-800 rounded-[32px] p-6 sm:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex flex-col items-center">
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+          className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition z-10"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-2xl bg-cyan-500/20 border border-cyan-400/40 text-neon-cyan shadow-neon-cyan">
-            <Sparkles className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold tracking-tight">Panduan Gestur Touchless Photobooth</h2>
-            <p className="text-xs text-slate-400">Interaksi 100% tanpa sentuhan menggunakan AI MediaPipe Vision</p>
+        {/* Top Header with Pink Tape */}
+        <div className="relative mb-2">
+          <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-24 h-5 bg-pink-400/80 -rotate-2 rounded-sm shadow-sm" />
+          <div className="px-6 py-1.5 rounded-full bg-pink-200 text-pink-950 font-black text-xs uppercase tracking-wider border border-pink-300">
+            GESTURE GUIDE
           </div>
         </div>
 
-        {/* Gesture Grid */}
-        <div className="space-y-3">
-          {guides.map((item, idx) => (
-            <div
-              key={idx}
-              className={`flex items-start gap-4 p-4 rounded-2xl border bg-gradient-to-r ${item.bgGlow} ${item.borderColor} backdrop-blur-sm transition hover:scale-[1.01]`}
-            >
-              <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 shrink-0">
-                {item.icon}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <h3 className="text-sm font-semibold text-white">{item.title}</h3>
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-black/60 border border-white/15 text-slate-300">
-                    {item.tag}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed">{item.description}</p>
-              </div>
+        {/* Title */}
+        <h2 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight flex items-center gap-2 mb-4">
+          <span>- CARA MENGGUNAKAN -</span>
+          <span className="text-pink-500">♡</span>
+        </h2>
+
+        {/* 4 Gesture Cards Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full mb-5">
+          {/* 1. Swipe Left / Right */}
+          <div className="p-3 rounded-2xl bg-pink-50/90 border-2 border-pink-200 flex flex-col items-center text-center">
+            <span className="text-xs font-black uppercase text-pink-800 mb-0.5">
+              SWIPE ⟵ / ⟶
+            </span>
+            <span className="text-[10px] text-slate-500 font-bold mb-2">Pilih Frame</span>
+            <div className="w-12 h-12 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/gestures/gesture_open_palm.png"
+                alt="Swipe"
+                className="w-10 h-10 object-contain"
+              />
             </div>
-          ))}
+            <span className="text-[10px] font-semibold text-slate-600 mt-1">Geser Tangan</span>
+          </div>
+
+          {/* 2. OK Sign & Thumbs Down */}
+          <div className="p-3 rounded-2xl bg-amber-50/90 border-2 border-amber-200 flex flex-col items-center text-center">
+            <span className="text-xs font-black uppercase text-amber-800 mb-0.5">
+              👌 OK / 👎 BATAL
+            </span>
+            <span className="text-[10px] text-slate-500 font-bold mb-2">Pilih / Kembali</span>
+            <div className="w-12 h-12 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/gestures/hand_pointing_up.png"
+                alt="OK / Batal"
+                className="w-10 h-10 object-contain transform rotate-45"
+              />
+            </div>
+            <span className="text-[10px] font-semibold text-slate-600 mt-1">👌 Pilih | 👎 Batal</span>
+          </div>
+
+          {/* 3. Peace Sign */}
+          <div className="p-3 rounded-2xl bg-emerald-50/90 border-2 border-emerald-200 flex flex-col items-center text-center">
+            <span className="text-xs font-black uppercase text-emerald-800 mb-0.5">
+              ✌️ PEACE
+            </span>
+            <span className="text-[10px] text-slate-500 font-bold mb-2">Mulai / Foto</span>
+            <div className="w-12 h-12 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/gestures/hand_peace_sign.png"
+                alt="Peace Sign"
+                className="w-10 h-10 object-contain animate-bounce"
+              />
+            </div>
+            <span className="text-[10px] font-semibold text-slate-600 mt-1">Foto 1, 2, 3</span>
+          </div>
+
+          {/* 4. L-Sign */}
+          <div className="p-3 rounded-2xl bg-blue-50/90 border-2 border-blue-200 flex flex-col items-center text-center">
+            <span className="text-xs font-black uppercase text-blue-800 mb-0.5">
+              👆 HURUF L
+            </span>
+            <span className="text-[10px] text-slate-500 font-bold mb-2">Buka Panduan</span>
+            <div className="w-12 h-12 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/assets/gestures/hand_pointing_up.png"
+                alt="L Sign"
+                className="w-10 h-10 object-contain transform rotate-12"
+              />
+            </div>
+            <span className="text-[10px] font-semibold text-slate-600 mt-1">Kapan Saja</span>
+          </div>
         </div>
 
-        {/* Dual Display Info */}
-        <div className="mt-5 p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-xs text-indigo-200 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-indigo-400 shrink-0" />
-          <p>
-            <strong>Dual-Monitor Support:</strong> Buka tautan <span className="text-neon-cyan font-mono font-bold">/gallery</span> pada layar monitor kedua. Foto akan tersinkronisasi otomatis secara real-time via BroadcastChannel tanpa jeda!
-          </p>
+        {/* Tips Sticky */}
+        <div className="px-4 py-2 rounded-2xl bg-amber-100 border border-amber-300 text-xs font-semibold text-slate-700 mb-4 text-center">
+          💡 Tunjukkan gestur <strong>👌 OK</strong>, <strong>✌️ Peace</strong>, atau klik tombol di bawah untuk menutup panduan ini.
         </div>
 
-        {/* Action Button */}
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={onClose}
-            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-neon-cyan to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-bold text-sm shadow-neon-cyan transition"
-          >
-            Mulai Berfoto 🚀
-          </button>
+        {/* Auto-Dismiss Progress Bar */}
+        <div className="w-48 h-1.5 bg-slate-200 rounded-full overflow-hidden mb-3">
+          <div
+            className="h-full bg-pink-500 transition-all duration-1000 ease-linear"
+            style={{ width: `${progressPercent}%` }}
+          />
         </div>
+
+        {/* Got It Button */}
+        <button
+          onClick={onClose}
+          className="px-8 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider shadow-md transition flex items-center gap-2"
+        >
+          <span>MENGERTI! ✌️</span>
+          <span className="text-[10px] text-slate-400 font-normal">({secondsLeft}s)</span>
+        </button>
       </div>
     </div>
   );

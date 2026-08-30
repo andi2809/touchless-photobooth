@@ -1,406 +1,115 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useHandLandmarker } from '@/hooks/useHandLandmarker';
-import { useSoundEffects } from '@/hooks/useSoundEffects';
-import { useBroadcastGallery } from '@/hooks/useBroadcastGallery';
-import { evaluateGestures, smoothBoundingBox, smoothPoint } from '@/utils/gestureMath';
-import { createCompositePhoto } from '@/utils/frameComposite';
-import {
-  BoundingBox,
-  NormalizedLandmark,
-  ActiveGesture,
-  CaptureStage,
-  PhotoboothFrameId,
-  DrawingStroke,
-  DrawingPoint,
-  CapturedPhoto,
-  VirtualCursorState,
-} from '@/types/photobooth';
-import { CameraView } from '@/components/Photobooth/CameraView';
-import { ControlHeader } from '@/components/Photobooth/ControlHeader';
+import { useBoothStateMachine } from '@/hooks/useBoothStateMachine';
+import { GestureStabilizer } from '@/utils/gestureDetector';
+import { NormalizedLandmark } from '@/types/photobooth';
+import { HandLandmarkCanvas } from '@/components/Photobooth/HandLandmarkCanvas';
+import { IdleView } from '@/components/Photobooth/IdleView';
+import { FrameSelectionView } from '@/components/Photobooth/FrameSelectionView';
+import { CameraReadyView } from '@/components/Photobooth/CameraReadyView';
+import { CountdownView } from '@/components/Photobooth/CountdownView';
+import { CompositingView } from '@/components/Photobooth/CompositingView';
+import { ResultView } from '@/components/Photobooth/ResultView';
 import { GestureGuideModal } from '@/components/Photobooth/GestureGuideModal';
-import { PhotoPreviewModal } from '@/components/Photobooth/PhotoPreviewModal';
-import { Sparkles, Camera, AlertCircle, RefreshCw } from 'lucide-react';
-
-const LOCK_HOLD_DURATION_MS = 2000; // 2.0s hold to permanently lock frame area
-const FREE_POSE_COUNTDOWN_SEC = 3;   // 3s free pose countdown once locked
-const DWELL_TRIGGER_DURATION_MS = 1200; // 1.2s hover dwell to select UI button
+import {
+  Volume2,
+  VolumeX,
+  Maximize2,
+  Minimize2,
+  AlertCircle,
+  RefreshCw,
+  Camera,
+  Activity,
+} from 'lucide-react';
+import Link from 'next/link';
 
 export default function PhotoboothPage() {
-  // 1. Core Hooks
+  // 1. MediaPipe AI & Camera Stream Hook
   const {
     isLoading,
     isModelReady,
     isCameraActive,
-    errorMessage,
-    availableCameras,
-    selectedCameraId,
-    videoDimensions,
+    errorMessage: cameraError,
     fps,
     videoRef,
     startCamera,
-    switchCamera,
     detectHands,
-  } = useHandLandmarker({ numHands: 4 });
-
-  const {
-    isMuted,
-    toggleMute,
-    playShutter,
-    playCountdownBeep,
-    playFrameLock,
-    playClearChime,
-    playSuccess,
-  } = useSoundEffects();
-
-  const { broadcastPhoto } = useBroadcastGallery();
-
-  // 2. Photobooth Reactive State
-  const [activeGesture, setActiveGesture] = useState<ActiveGesture>('IDLE');
-  const [stage, setStage] = useState<CaptureStage>('IDLE');
-  const [frameBox, setFrameBox] = useState<BoundingBox | null>(null);
-  const [allHandsLandmarks, setAllHandsLandmarks] = useState<NormalizedLandmark[][]>([]);
-  const [strokes, setStrokes] = useState<DrawingStroke[]>([]);
-  const [currentStroke, setCurrentStroke] = useState<DrawingPoint[]>([]);
-  const [selectedColor, setSelectedColor] = useState<string>('#00f0ff');
-  const [brushSize, setBrushSize] = useState<number>(8);
-  const [selectedFrameId, setSelectedFrameId] = useState<PhotoboothFrameId>('cyber');
-
-  // Countdown & Flash
-  const [countdown, setCountdown] = useState<number | null>(null);
-  const [lockProgress, setLockProgress] = useState<number>(0);
-  const [isFlashing, setIsFlashing] = useState<boolean>(false);
-  const [capturedPhoto, setCapturedPhoto] = useState<CapturedPhoto | null>(null);
-  const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-
-  // Touchless Virtual Hover Dwell Cursor State
-  const [virtualCursor, setVirtualCursor] = useState<VirtualCursorState>({
-    x: 0,
-    y: 0,
-    isActive: false,
-    hoveredTargetId: null,
-    dwellProgress: 0,
+  } = useHandLandmarker({
+    numHands: 4,
+    minDetectionConfidence: 0.4,
+    minTrackingConfidence: 0.4,
   });
 
-  // 3. Persistent Refs for Timing & Locks
-  const stageRef = useRef<CaptureStage>('IDLE');
-  stageRef.current = stage;
+  const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
 
-  const lockHoldStartRef = useRef<number | null>(null);
-  const lockedFrameBoxRef = useRef<BoundingBox | null>(null);
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const prevFrameBoxRef = useRef<BoundingBox | null>(null);
-  const prevDrawPointRef = useRef<{ x: number; y: number } | null>(null);
-  const prevCursorPosRef = useRef<{ x: number; y: number } | null>(null);
+  // 2. State Machine Hook
+  const {
+    state,
+    session,
+    templateIndex,
+    allTemplates,
+    countdown,
+    isFlashing,
+    lastTriggeredGesture,
+    handleGestureEvent,
+    resetSession,
+    startSessionManually,
+    selectNextFrame,
+    selectPrevFrame,
+    confirmFrameManually,
+    triggerPeaceManually,
+    soundEffects,
+  } = useBoothStateMachine(videoRef, isGuideOpen, setIsGuideOpen);
 
-  // Hover Dwell Refs
-  const currentHoverIdRef = useRef<string | null>(null);
-  const hoverStartTimeRef = useRef<number | null>(null);
-  const lastDwellTriggeredIdRef = useRef<string | null>(null);
-  const palmCooldownRef = useRef<number>(0);
+  // 3. Landmarks & Gesture Refs (Decouples 60 FPS Canvas rendering from React re-renders)
+  const gestureStabilizerRef = useRef<GestureStabilizer>(new GestureStabilizer());
+  const landmarksRef = useRef<NormalizedLandmark[][]>([]);
+  const activeGestureRef = useRef<string>('IDLE');
+
+  const [activeContinuousGesture, setActiveContinuousGesture] = useState<string>('IDLE');
+  const [gestureConfidence, setGestureConfidence] = useState<number>(0);
+  const [handsCount, setHandsCount] = useState<number>(0);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
+  const [showDevDebug, setShowDevDebug] = useState<boolean>(false);
+
+  const lastDebugUpdateRef = useRef<number>(0);
 
   // Toggle fullscreen
-  const toggleFullscreen = useCallback(() => {
+  const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
     } else {
       document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
     }
-  }, []);
+  };
 
-  // Clear air drawing strokes
-  const handleClearDrawing = useCallback(() => {
-    setStrokes([]);
-    setCurrentStroke([]);
-    prevDrawPointRef.current = null;
-    playClearChime();
-  }, [playClearChime]);
-
-  // Execute snapshot capture
-  const handleExecuteSnapshot = useCallback(async () => {
-    if (!videoRef.current) return;
-    setStage('CAPTURING');
-
-    // Trigger visual flash & shutter sound
-    setIsFlashing(true);
-    playShutter();
-    setTimeout(() => setIsFlashing(false), 400);
-
-    try {
-      const activeBox = lockedFrameBoxRef.current || frameBox;
-      const photo = await createCompositePhoto({
-        video: videoRef.current,
-        strokes,
-        frameBox: activeBox,
-        frameId: selectedFrameId,
-        eventName: 'FOTO KITA BLUR • PTI BEMP 2026',
-        applyBlurEffect: true,
-      });
-
-      // Broadcast to Monitor 2 Live Gallery
-      broadcastPhoto(photo);
-      setCapturedPhoto(photo);
-      playSuccess();
-
-      // Clear drawing strokes for fresh next session
-      setStrokes([]);
-      setCurrentStroke([]);
-    } catch (err) {
-      console.error('[Photobooth] Error creating composite snapshot:', err);
-    } finally {
-      setStage('SAVED_PREVIEW');
-      lockedFrameBoxRef.current = null;
-      setFrameBox(null);
-      setCountdown(null);
-      setLockProgress(0);
-      lockHoldStartRef.current = null;
-    }
-  }, [videoRef, strokes, frameBox, selectedFrameId, playShutter, broadcastPhoto, playSuccess]);
-
-  // Start Stage 2 Free Pose Countdown once locked
-  const startFreePoseCountdown = useCallback(() => {
-    setStage('LOCKED_COUNTDOWN');
-    let currentSec = FREE_POSE_COUNTDOWN_SEC;
-    setCountdown(currentSec);
-    playCountdownBeep(false);
-
-    if (countdownIntervalRef.current) {
-      clearInterval(countdownIntervalRef.current);
-    }
-
-    countdownIntervalRef.current = setInterval(() => {
-      currentSec -= 1;
-      if (currentSec > 0) {
-        setCountdown(currentSec);
-        playCountdownBeep(currentSec === 1);
-      } else {
-        if (countdownIntervalRef.current) {
-          clearInterval(countdownIntervalRef.current);
-          countdownIntervalRef.current = null;
-        }
-        setCountdown(0);
-        handleExecuteSnapshot();
-      }
-    }, 1000);
-  }, [handleExecuteSnapshot, playCountdownBeep]);
-
-  // Manual Capture Trigger
-  const handleManualCapture = useCallback(() => {
-    if (stageRef.current === 'CAPTURING') return;
-    handleExecuteSnapshot();
-  }, [handleExecuteSnapshot]);
-
-  // Action Dispatcher for Touchless Dwell Selection
-  const handleDwellSelect = useCallback(
-    (targetId: string) => {
-      playFrameLock();
-
-      if (targetId.startsWith('touchless-color-')) {
-        const colorName = targetId.replace('touchless-color-', '');
-        const map: Record<string, string> = {
-          cyan: '#00f0ff',
-          magenta: '#ff007f',
-          gold: '#ffe600',
-          lime: '#00ff66',
-          purple: '#b026ff',
-          white: '#ffffff',
-        };
-        if (map[colorName]) setSelectedColor(map[colorName]);
-      } else if (targetId.startsWith('touchless-frame-')) {
-        const frame = targetId.replace('touchless-frame-', '') as PhotoboothFrameId;
-        setSelectedFrameId(frame);
-      } else if (targetId === 'touchless-clear') {
-        handleClearDrawing();
-      } else if (targetId === 'touchless-capture') {
-        handleManualCapture();
-      } else if (targetId === 'touchless-mute') {
-        toggleMute();
-      } else if (targetId === 'touchless-guide') {
-        setIsGuideOpen((prev) => !prev);
-      }
-    },
-    [playFrameLock, handleClearDrawing, handleManualCapture, toggleMute]
-  );
-
-  // Main Detection & Interactive Animation Loop
+  // Main Detection Loop (60 FPS MediaPipe Evaluation & Direct Skeleton Feeding)
   useEffect(() => {
     let animationFrameId: number;
 
     const loop = (timestamp: number) => {
       if (videoRef.current && isCameraActive && isModelReady) {
         const detectedHands = detectHands(videoRef.current, timestamp);
-        setAllHandsLandmarks(detectedHands);
+        landmarksRef.current = detectedHands;
 
-        const evalState = evaluateGestures(detectedHands);
-        setActiveGesture(evalState.gesture);
+        // Process through Gesture Stabilizer
+        const result = gestureStabilizerRef.current.processFrame(detectedHands, timestamp);
+        activeGestureRef.current = result.activeContinuousGesture;
 
-        // -------------------------------------------------------------
-        // 1. Touchless Virtual Hover-Dwell Cursor Navigation
-        // -------------------------------------------------------------
-        if (evalState.indexFingerTip) {
-          // Convert mirrored normalized coords to screen pixels
-          const rawScreenX = (1 - evalState.indexFingerTip.x) * window.innerWidth;
-          const rawScreenY = evalState.indexFingerTip.y * window.innerHeight;
-
-          // Low-pass coordinate smoothing for cursor
-          const prev = prevCursorPosRef.current || { x: rawScreenX, y: rawScreenY };
-          const smoothX = prev.x + (rawScreenX - prev.x) * 0.45;
-          const smoothY = prev.y + (rawScreenY - prev.y) * 0.45;
-          prevCursorPosRef.current = { x: smoothX, y: smoothY };
-
-          // Hit test against interactive touchless targets
-          const touchlessElements = document.querySelectorAll('[data-touchless-id]');
-          let foundTargetId: string | null = null;
-
-          touchlessElements.forEach((el) => {
-            const rect = el.getBoundingClientRect();
-            if (
-              smoothX >= rect.left &&
-              smoothX <= rect.right &&
-              smoothY >= rect.top &&
-              smoothY <= rect.bottom
-            ) {
-              foundTargetId = el.getAttribute('data-touchless-id');
-            }
-          });
-
-          // Dwell progress calculation
-          let dwellProg = 0;
-          const now = performance.now();
-
-          if (foundTargetId) {
-            if (currentHoverIdRef.current === foundTargetId) {
-              const elapsed = now - (hoverStartTimeRef.current || now);
-              dwellProg = Math.min(1, elapsed / DWELL_TRIGGER_DURATION_MS);
-
-              // 100% Dwell reached -> trigger action
-              if (dwellProg >= 1 && lastDwellTriggeredIdRef.current !== foundTargetId) {
-                lastDwellTriggeredIdRef.current = foundTargetId;
-                handleDwellSelect(foundTargetId);
-              }
-            } else {
-              currentHoverIdRef.current = foundTargetId;
-              hoverStartTimeRef.current = now;
-              lastDwellTriggeredIdRef.current = null;
-            }
-          } else {
-            currentHoverIdRef.current = null;
-            hoverStartTimeRef.current = null;
-            lastDwellTriggeredIdRef.current = null;
-          }
-
-          setVirtualCursor({
-            x: smoothX,
-            y: smoothY,
-            isActive: true,
-            hoveredTargetId: foundTargetId,
-            dwellProgress: dwellProg,
-          });
-        } else {
-          setVirtualCursor((c) => ({ ...c, isActive: false, dwellProgress: 0 }));
-          prevCursorPosRef.current = null;
-          currentHoverIdRef.current = null;
-          hoverStartTimeRef.current = null;
+        // Dispatch discrete edge-triggered event to State Machine
+        if (result.triggeredEvent) {
+          handleGestureEvent(result.triggeredEvent);
         }
 
-        // -------------------------------------------------------------
-        // 2. Two-Stage Framing & Capture Workflow
-        // -------------------------------------------------------------
-        if (stageRef.current === 'IDLE' || stageRef.current === 'FRAMING') {
-          if (evalState.gesture === 'FRAME_CAPTURE' && evalState.frameBox) {
-            const smoothed = smoothBoundingBox(evalState.frameBox, prevFrameBoxRef.current);
-            prevFrameBoxRef.current = smoothed;
-            setFrameBox(smoothed);
-
-            if (stageRef.current === 'IDLE') {
-              setStage('FRAMING');
-              lockHoldStartRef.current = performance.now();
-            }
-
-            const now = performance.now();
-            const elapsed = now - (lockHoldStartRef.current || now);
-            const progress = Math.min(1, elapsed / LOCK_HOLD_DURATION_MS);
-            setLockProgress(progress);
-
-            // Stage 1 Complete: 2.0s hold reached -> Lock permanently & start Stage 2
-            if (elapsed >= LOCK_HOLD_DURATION_MS) {
-              lockedFrameBoxRef.current = smoothed;
-              playFrameLock();
-              startFreePoseCountdown();
-            }
-          } else {
-            // Cancel framing if hands broken before 2.0s
-            if (stageRef.current === 'FRAMING') {
-              setStage('IDLE');
-              setLockProgress(0);
-              lockHoldStartRef.current = null;
-              prevFrameBoxRef.current = null;
-              setFrameBox(null);
-            }
-          }
-        }
-
-        // -------------------------------------------------------------
-        // 3. Smooth Air Drawing (when not hovering UI targets)
-        // -------------------------------------------------------------
-        if (
-          evalState.gesture === 'AIR_DRAW' &&
-          evalState.drawPoint &&
-          !currentHoverIdRef.current &&
-          stageRef.current !== 'LOCKED_COUNTDOWN'
-        ) {
-          const smoothedPt = smoothPoint(evalState.drawPoint, prevDrawPointRef.current);
-          prevDrawPointRef.current = smoothedPt;
-
-          const newPoint: DrawingPoint = {
-            x: smoothedPt.x,
-            y: smoothedPt.y,
-            color: selectedColor,
-            size: brushSize,
-          };
-
-          setCurrentStroke((prev) => [...prev, newPoint]);
-        } else {
-          // Commit stroke to permanent array when pointing ceases
-          if (currentStroke.length > 0) {
-            setStrokes((prev) => [
-              ...prev,
-              {
-                points: currentStroke,
-                color: selectedColor,
-                size: brushSize,
-              },
-            ]);
-            setCurrentStroke([]);
-          }
-          prevDrawPointRef.current = null;
-        }
-
-        // -------------------------------------------------------------
-        // 4. Open Palm (Wipe / Reset Canvas & Framing)
-        // -------------------------------------------------------------
-        if (evalState.gesture === 'OPEN_PALM') {
-          const now = Date.now();
-          if (now - palmCooldownRef.current > 1500) {
-            if (strokes.length > 0 || currentStroke.length > 0) {
-              handleClearDrawing();
-              palmCooldownRef.current = now;
-            }
-            // If in framing, cancel frame lock
-            if (stageRef.current === 'FRAMING' || stageRef.current === 'LOCKED_COUNTDOWN') {
-              if (countdownIntervalRef.current) {
-                clearInterval(countdownIntervalRef.current);
-                countdownIntervalRef.current = null;
-              }
-              setStage('IDLE');
-              setFrameBox(null);
-              setCountdown(null);
-              setLockProgress(0);
-              lockedFrameBoxRef.current = null;
-            }
-          }
+        // Throttle debug HUD state updates to 4 times a second (250ms) to eliminate React re-render overhead
+        if (timestamp - lastDebugUpdateRef.current >= 250) {
+          lastDebugUpdateRef.current = timestamp;
+          setActiveContinuousGesture(result.activeContinuousGesture);
+          setGestureConfidence(result.confidence);
+          setHandsCount(detectedHands.length);
         }
       }
 
@@ -412,94 +121,345 @@ export default function PhotoboothPage() {
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [
-    isCameraActive,
-    isModelReady,
-    detectHands,
-    videoRef,
-    selectedColor,
-    brushSize,
-    currentStroke,
-    strokes.length,
-    handleDwellSelect,
-    startFreePoseCountdown,
-    handleClearDrawing,
-    playFrameLock,
-  ]);
+  }, [isCameraActive, isModelReady, detectHands, videoRef, handleGestureEvent]);
 
-  // Keyboard Shortcuts (Space to capture, C to clear, G for guide)
+  // Keyboard Shortcuts for Testing & Operation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
+      if (e.code === 'ArrowLeft') {
         e.preventDefault();
-        handleManualCapture();
-      } else if (e.code === 'KeyC') {
-        handleClearDrawing();
-      } else if (e.code === 'KeyG') {
-        setIsGuideOpen((prev) => !prev);
+        selectPrevFrame();
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        selectNextFrame();
+      } else if (e.code === 'KeyT' || e.code === 'Enter') {
+        e.preventDefault();
+        if (state === 'IDLE') startSessionManually();
+        else if (state === 'FRAME_SELECTION') confirmFrameManually();
+      } else if (e.code === 'Space' || e.code === 'KeyP') {
+        e.preventDefault();
+        if (state === 'READY') triggerPeaceManually();
+      } else if (e.code === 'Escape' || e.code === 'Backspace') {
+        e.preventDefault();
+        resetSession();
+      } else if (e.code === 'KeyD') {
+        setShowDevDebug((prev) => !prev);
+      } else if (e.code === 'KeyS') {
+        setShowSkeleton((prev) => !prev);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleManualCapture, handleClearDrawing]);
+  }, [
+    state,
+    selectPrevFrame,
+    selectNextFrame,
+    startSessionManually,
+    confirmFrameManually,
+    triggerPeaceManually,
+    resetSession,
+  ]);
+
+  // Dynamic Header Title based on state
+  const stateTitleMap: Record<string, string> = {
+    IDLE: 'TOUCHLESS PHOTOBOOTH',
+    FRAME_SELECTION: 'PILIH FRAME KAMU!',
+    READY: 'GET READY!',
+    COUNTDOWN: 'SMILE BIG!',
+    CAPTURE: 'SAY CHEESE!',
+    COMPOSITING: 'MENGGABUNG FOTO...',
+    UPLOADING: 'MENGUPLOAD KE DRIVE...',
+    RESULT: 'HERE ARE YOUR RESULTS!',
+    RESETTING: 'TERIMA KASIH!',
+  };
+
+  const currentTemplate = session.selectedTemplate || allTemplates[templateIndex] || allTemplates[0];
 
   return (
-    <main className="relative w-screen h-screen bg-black overflow-hidden select-none font-sans">
-      {/* Top Glassmorphism HUD with Touchless Dwell Targets */}
-      <ControlHeader
-        fps={fps}
-        activeGesture={activeGesture}
-        selectedColor={selectedColor}
-        onSelectColor={setSelectedColor}
-        selectedFrameId={selectedFrameId}
-        onSelectFrame={setSelectedFrameId}
-        brushSize={brushSize}
-        onChangeBrushSize={setBrushSize}
-        availableCameras={availableCameras}
-        selectedCameraId={selectedCameraId}
-        onSelectCamera={switchCamera}
-        isMuted={isMuted}
-        onToggleMute={toggleMute}
-        isFullscreen={isFullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        onClearDrawing={handleClearDrawing}
-        onOpenGuide={() => setIsGuideOpen(true)}
-        onManualCapture={handleManualCapture}
-        hoveredTargetId={virtualCursor.hoveredTargetId}
+    <main className="relative w-screen h-screen bg-[#F7F2EB] p-2 sm:p-3 overflow-hidden select-none font-sans text-slate-900 flex flex-col justify-between">
+      {/* 1. Outer App Window Header Bar */}
+      <header className="relative w-full px-3 py-1 flex items-center justify-between z-40">
+        {/* Left: PTIK Logo & Doodle Camera */}
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/decorations/camera_retro.png"
+            alt="Camera"
+            className="w-8 h-8 object-contain"
+          />
+          <div className="flex items-center gap-1.5">
+            <span className="text-lg sm:text-xl font-black tracking-tight text-slate-800 font-sans">
+              PTIK PHOTOBOOTH
+            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/assets/decorations/heart_pink_small.png"
+              alt="Heart"
+              className="w-4 h-4 object-contain inline-block"
+            />
+          </div>
+        </div>
+
+        {/* Center: Pink Washi Banner with Sunburst Ticks */}
+        <div className="absolute left-1/2 -translate-x-1/2 top-1 flex items-center gap-2">
+          <span className="text-pink-400 font-bold hidden sm:inline">\\</span>
+          <div className="px-5 sm:px-8 py-1.5 rounded-full bg-pink-200/95 text-pink-950 font-black text-xs sm:text-sm uppercase tracking-wider border-2 border-pink-300 shadow-sm flex items-center gap-2">
+            <span>-</span>
+            <span>{stateTitleMap[state] || 'TOUCHLESS PHOTOBOOTH'}</span>
+            <span>-</span>
+          </div>
+          <span className="text-pink-400 font-bold hidden sm:inline">//</span>
+        </div>
+
+        {/* Right: BEMP PTIK 2026 Ribbon & Controls */}
+        <div className="flex items-center gap-2">
+          {/* BEMP PTIK 2026 Ribbon */}
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-100 border border-blue-300 text-blue-900 text-xs font-black shadow-sm">
+            <span>⭐</span>
+            <span>BEMP PTIK 2026</span>
+          </div>
+
+          {/* Skeleton Landmark Toggle */}
+          <button
+            onClick={() => setShowSkeleton(!showSkeleton)}
+            title={showSkeleton ? 'Sembunyikan Skeleton Tangan (S)' : 'Tampilkan Skeleton Tangan (S)'}
+            className={`p-2 rounded-xl border transition ${
+              showSkeleton
+                ? 'bg-emerald-100 border-emerald-400 text-emerald-800 shadow-sm'
+                : 'bg-white border-slate-300 text-slate-400'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+          </button>
+
+          {/* Mute Toggle */}
+          <button
+            onClick={() => soundEffects.toggleMute()}
+            title={soundEffects.isMuted ? 'Nyalakan Suara' : 'Matikan Suara'}
+            className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 transition shadow-sm"
+          >
+            {soundEffects.isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
+          {/* Fullscreen Toggle */}
+          <button
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh (F11)'}
+            className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 transition shadow-sm"
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
+          {/* Debug Compositor Link */}
+          <Link
+            href="/debug/compositor"
+            className="hidden sm:inline-block px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-[11px] font-bold text-slate-700 transition shadow-sm"
+          >
+            Compositor
+          </Link>
+        </div>
+      </header>
+
+      {/* 2. Main Center Viewfinder (Camera Box with Rounded Border & Corner Brackets) */}
+      <div className="relative flex-1 w-full max-h-[89vh] my-auto rounded-[32px] overflow-hidden border-3 border-slate-800 bg-slate-900 shadow-2xl flex items-center justify-center">
+        {/* Corner Brackets */}
+        <div className="absolute top-4 left-4 w-6 h-6 border-t-3 border-l-3 border-white/60 pointer-events-none z-30 rounded-tl" />
+        <div className="absolute top-4 right-4 w-6 h-6 border-t-3 border-r-3 border-white/60 pointer-events-none z-30 rounded-tr" />
+        <div className="absolute bottom-4 left-4 w-6 h-6 border-b-3 border-l-3 border-white/60 pointer-events-none z-30 rounded-bl" />
+        <div className="absolute bottom-4 right-4 w-6 h-6 border-b-3 border-r-3 border-white/60 pointer-events-none z-30 rounded-br" />
+
+        {/* 2.1 Live Mirrored Video Stream */}
+        <video
+          ref={videoRef}
+          playsInline
+          autoPlay
+          muted
+          className={`w-full h-full object-cover transform -scale-x-100 transition-opacity duration-500 ${
+            isCameraActive ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+
+        {/* 2.2 Real-time MediaPipe Hand Landmarks & Detailed Smoothed Skeleton Canvas */}
+        <HandLandmarkCanvas
+          landmarksRef={landmarksRef}
+          activeGestureRef={activeGestureRef}
+          isMirrored={true}
+          isVisible={showSkeleton}
+        />
+
+        {/* 2.3 Shutter Flash Effect */}
+        <div
+          className={`absolute inset-0 bg-white pointer-events-none transition-opacity duration-300 z-40 ${
+            isFlashing ? 'opacity-95' : 'opacity-0'
+          }`}
+        />
+
+        {/* 2.4 Cute Tips Sticky Note (Shown only on IDLE state) */}
+        {state === 'IDLE' && (
+          <aside className="absolute top-4 right-6 z-30 pointer-events-auto hidden md:block animate-fade-in">
+            <div className="relative p-3 rounded-2xl bg-[#FFF6D6] text-slate-800 border-2 border-amber-300 shadow-lg rotate-2 max-w-[170px] text-left">
+              <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-14 h-4 bg-pink-400/80 -rotate-2 rounded-sm shadow-sm" />
+              <div className="flex items-center gap-1 text-xs font-black text-amber-900 mb-0.5">
+                <span>💡</span>
+                <span>Tips</span>
+              </div>
+              <p className="text-[10px] font-semibold text-slate-700 leading-tight">
+                Berdiri di depan kamera dan pastikan tanganmu terlihat jelas! ♡
+              </p>
+            </div>
+          </aside>
+        )}
+
+        {/* 2.5 State-Driven UI Overlays */}
+        {state === 'IDLE' && (
+          <IdleView
+            onStart={startSessionManually}
+            onOpenGuide={() => setIsGuideOpen(true)}
+          />
+        )}
+
+        {state === 'FRAME_SELECTION' && (
+          <FrameSelectionView
+            allTemplates={allTemplates}
+            currentIndex={templateIndex}
+            onSelectPrev={selectPrevFrame}
+            onSelectNext={selectNextFrame}
+            onConfirm={confirmFrameManually}
+            onCancel={resetSession}
+          />
+        )}
+
+        {state === 'READY' && (
+          <CameraReadyView
+            currentPhotoIndex={session.currentPhotoIndex}
+            templateName={currentTemplate.name}
+            onTriggerPeace={triggerPeaceManually}
+            onCancel={resetSession}
+          />
+        )}
+
+        {state === 'COUNTDOWN' && (
+          <CountdownView
+            countdown={countdown}
+            currentPhotoIndex={session.currentPhotoIndex}
+          />
+        )}
+
+        {(state === 'COMPOSITING' || state === 'UPLOADING') && (
+          <CompositingView
+            state={state}
+            photos={session.photos}
+            selectedTemplate={currentTemplate}
+          />
+        )}
+
+        {state === 'RESULT' && session.finalComposite && (
+          <ResultView
+            finalComposite={session.finalComposite}
+            onReset={resetSession}
+          />
+        )}
+      </div>
+
+      {/* 3. Outer Frame Corner Decorative Stickers */}
+      <div className="absolute bottom-2 left-4 pointer-events-none hidden lg:block z-40">
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/decorations/cloud_blue.png"
+            alt="Cloud"
+            className="w-16 h-10 object-contain"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/decorations/flower_pink.png"
+            alt="Flower"
+            className="w-8 h-8 object-contain"
+          />
+        </div>
+      </div>
+
+      <div className="absolute bottom-2 right-4 pointer-events-none hidden lg:block z-40">
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/decorations/flower_purple.png"
+            alt="Flower"
+            className="w-8 h-8 object-contain"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/assets/decorations/cat_head_wink.png"
+            alt="Cat"
+            className="w-10 h-10 object-contain"
+          />
+        </div>
+      </div>
+
+      {/* 4. Development Minimal Debug Overlay (Toggle with key 'D') */}
+      {showDevDebug && (
+        <aside className="absolute top-16 right-6 z-50 p-4 rounded-2xl bg-white/95 text-slate-900 border-2 border-slate-800 shadow-2xl backdrop-blur-md text-xs font-mono space-y-2 w-72 pointer-events-auto">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-200 text-slate-900 font-black">
+            <span>🛠️ TOUCHLESS DEBUG</span>
+            <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded font-mono">{fps} FPS</span>
+          </div>
+
+          <div className="space-y-1.5 text-slate-700 text-[11px]">
+            <div className="flex justify-between">
+              <span>Hand Detected:</span>
+              <span className={`font-bold ${handsCount > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                {handsCount > 0 ? `YES (${handsCount} Hand)` : 'NO'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Gesture:</span>
+              <span className="font-bold text-pink-600">
+                {activeContinuousGesture !== 'IDLE' ? activeContinuousGesture : 'NONE'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Confidence:</span>
+              <span className="font-bold text-slate-800">{(gestureConfidence * 100).toFixed(0)}%</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Current State:</span>
+              <span className="font-bold text-blue-600">{state}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Current Frame:</span>
+              <span className="truncate max-w-[120px] font-bold text-slate-900">{currentTemplate.name}</span>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200 text-[10px] text-slate-500 space-y-0.5">
+            <div>⌨️ [← / →] Geser Frame</div>
+            <div>⌨️ [T / Enter] Confirm Frame / Start</div>
+            <div>⌨️ [Space / P] Peace Gesture (Capture)</div>
+            <div>⌨️ [Esc] Reset Sesi</div>
+            <div>⌨️ [S] Toggle Skeleton Tangan</div>
+            <div>⌨️ [D] Toggle Debug Panel</div>
+          </div>
+        </aside>
+      )}
+
+      {/* 5. Gesture Guide Modal */}
+      <GestureGuideModal
+        isOpen={isGuideOpen}
+        onClose={() => setIsGuideOpen(false)}
       />
 
-      {/* Main Multi-Layer Camera & Canvas View */}
-      <CameraView
-        videoRef={videoRef}
-        isCameraActive={isCameraActive}
-        frameBox={frameBox}
-        allHands={allHandsLandmarks}
-        activeGesture={activeGesture}
-        stage={stage}
-        countdown={countdown}
-        lockProgress={lockProgress}
-        isFlashing={isFlashing}
-        strokes={strokes}
-        currentStroke={currentStroke}
-        selectedColor={selectedColor}
-        brushSize={brushSize}
-        selectedFrameId={selectedFrameId}
-        videoDimensions={videoDimensions}
-        virtualCursor={virtualCursor}
-      />
-
-      {/* Loading & Camera Error Overlay */}
+      {/* 6. Camera Error / Initializing Overlay */}
       {(!isCameraActive || isLoading) && (
-        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-xl p-6 text-center text-white">
-          {errorMessage ? (
-            <div className="max-w-md p-6 rounded-3xl bg-red-950/40 border border-red-500/50 shadow-2xl flex flex-col items-center">
-              <AlertCircle className="w-12 h-12 text-red-400 mb-3 animate-bounce" />
-              <h2 className="text-lg font-bold text-white mb-2">Akses Kamera Diperlukan</h2>
-              <p className="text-xs text-slate-300 mb-5 leading-relaxed">{errorMessage}</p>
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-xl p-6 text-center text-white select-none">
+          {cameraError ? (
+            <div className="max-w-md p-8 rounded-3xl bg-white text-slate-900 border-3 border-slate-800 shadow-2xl flex flex-col items-center">
+              <AlertCircle className="w-12 h-12 text-red-500 mb-3 animate-bounce" />
+              <h2 className="text-lg font-black text-slate-900 mb-2">Akses Kamera Diperlukan</h2>
+              <p className="text-xs text-slate-600 mb-6 leading-relaxed">{cameraError}</p>
               <button
                 onClick={() => startCamera()}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition shadow-lg"
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-red-500 hover:bg-red-600 text-white text-xs font-black shadow-lg transition"
               >
                 <RefreshCw className="w-4 h-4" />
                 <span>Coba Hubungkan Kamera Lagi</span>
@@ -508,54 +468,20 @@ export default function PhotoboothPage() {
           ) : (
             <div className="flex flex-col items-center">
               <div className="relative flex items-center justify-center w-20 h-20 mb-6">
-                <div className="absolute inset-0 rounded-full border-4 border-neon-cyan/20 animate-ping" />
-                <div className="w-16 h-16 rounded-full border-4 border-t-neon-cyan border-r-neon-pink border-b-neon-gold border-l-transparent animate-spin" />
-                <Camera className="absolute w-7 h-7 text-neon-cyan" />
+                <div className="absolute inset-0 rounded-full border-4 border-pink-400/30 animate-ping" />
+                <div className="w-16 h-16 rounded-full border-4 border-t-pink-400 border-r-amber-400 border-b-cyan-400 border-l-transparent animate-spin" />
+                <Camera className="absolute w-7 h-7 text-pink-400" />
               </div>
-              <h2 className="text-xl font-bold tracking-tight text-white mb-1">
-                Menginisialisasi MediaPipe AI...
+              <h2 className="text-xl font-black tracking-tight text-white mb-1">
+                Memuat Touchless Engine & MediaPipe AI...
               </h2>
               <p className="text-xs text-slate-400 max-w-sm">
-                Memuat akselerasi GPU & model Hand Landmarker lokal offline untuk performa maksimal di Mac M4.
+                Akselerasi GPU lokal siap mendeteksi gestur tangan bebas sentuh secara instan.
               </p>
             </div>
           )}
         </div>
       )}
-
-      {/* Bottom Floating Touchless Status Hint */}
-      <footer className="absolute bottom-4 left-0 right-0 z-30 pointer-events-none flex justify-center px-4">
-        <div className="pointer-events-auto flex items-center gap-3 px-4 py-2 rounded-2xl bg-black/70 border border-white/15 backdrop-blur-md text-xs text-slate-300 shadow-glass">
-          <div className="flex items-center gap-1.5 text-neon-cyan font-semibold">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Alur Dua Tahap:</span>
-          </div>
-          <span className="hidden sm:inline">
-            1. Bentuk bingkai <strong>2 tangan</strong> (tahan 2s) untuk kunci area fokus • 2. Berpose bebas saat <strong>countdown 3s</strong> berputar!
-          </span>
-          <button
-            onClick={() => setIsGuideOpen(true)}
-            className="text-neon-cyan hover:underline font-bold text-xs"
-          >
-            Panduan Lengkap
-          </button>
-        </div>
-      </footer>
-
-      {/* Captured Photo Preview Modal */}
-      <PhotoPreviewModal
-        photo={capturedPhoto}
-        onClose={() => {
-          setCapturedPhoto(null);
-          setStage('IDLE');
-        }}
-      />
-
-      {/* Gesture Help Modal */}
-      <GestureGuideModal
-        isOpen={isGuideOpen}
-        onClose={() => setIsGuideOpen(false)}
-      />
     </main>
   );
 }

@@ -234,7 +234,7 @@ function renderBrandingOverlay(
   ctx.textAlign = 'center';
   ctx.shadowColor = '#00f0ff';
   ctx.shadowBlur = 12;
-  ctx.fillText('📂 Akses & Unduh Foto: s.id/foto-maba-pti', width / 2, footerY + footerHeight * 0.5);
+  ctx.fillText('📂 Akses & Unduh Foto: s.id/ptik-photobooth', width / 2, footerY + footerHeight * 0.5);
 
   ctx.font = `bold ${Math.round(height * 0.018)}px "Geist Sans", sans-serif`;
   ctx.fillStyle = '#00f0ff';

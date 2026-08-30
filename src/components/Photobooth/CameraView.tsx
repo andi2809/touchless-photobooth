@@ -18,7 +18,7 @@ import {
 } from '@/types/photobooth';
 
 interface CameraViewProps {
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   isCameraActive: boolean;
   frameBox: BoundingBox | null;
   allHands: NormalizedLandmark[][];

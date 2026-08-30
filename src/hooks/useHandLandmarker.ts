@@ -19,8 +19,8 @@ interface CameraDevice {
 export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
   const {
     numHands = 4,
-    minDetectionConfidence = 0.5,
-    minTrackingConfidence = 0.5,
+    minDetectionConfidence = 0.4,
+    minTrackingConfidence = 0.4,
     autoStartCamera = true,
   } = options;
 
@@ -36,12 +36,16 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
   const landmarkerRef = useRef<HandLandmarker | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const selectedCameraIdRef = useRef<string>('');
+  selectedCameraIdRef.current = selectedCameraId;
+
   const animationFrameIdRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef<number>(-1);
   const frameCountRef = useRef<number>(0);
   const lastFpsUpdateRef = useRef<number>(performance.now());
+  const hasAutoStartedRef = useRef<boolean>(false);
 
-  // Enumerate connected cameras
+  // Enumerate connected cameras with zero external dependencies
   const refreshCameraDevices = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -54,13 +58,11 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
         }));
 
       setAvailableCameras(videoDevices);
-      if (videoDevices.length > 0 && !selectedCameraId) {
-        setSelectedCameraId(videoDevices[0].deviceId);
-      }
+      setSelectedCameraId((prev) => prev || (videoDevices[0]?.deviceId ?? ''));
     } catch (err) {
       console.warn('[useHandLandmarker] Failed to enumerate camera devices:', err);
     }
-  }, [selectedCameraId]);
+  }, []);
 
   // Initialize MediaPipe HandLandmarker with offline & CDN fallback
   useEffect(() => {
@@ -72,12 +74,10 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
 
       try {
         let visionResolver;
-        // Attempt 1: Load from local public/wasm directory
         try {
           visionResolver = await FilesetResolver.forVisionTasks('/wasm');
         } catch (localWasmErr) {
           console.warn('[useHandLandmarker] Local WASM load failed, falling back to CDN:', localWasmErr);
-          // Attempt 2: Fallback to official CDN
           visionResolver = await FilesetResolver.forVisionTasks(
             'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
           );
@@ -85,7 +85,6 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
 
         if (!isMounted) return;
 
-        // Model path: local public/models/hand_landmarker.task with fallback
         const modelAssetPath = '/models/hand_landmarker.task';
 
         const handLandmarker = await HandLandmarker.createFromOptions(visionResolver, {
@@ -124,9 +123,7 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
       if (landmarkerRef.current) {
         try {
           landmarkerRef.current.close();
-        } catch (e) {
-          // ignore cleanup errors
-        }
+        } catch (e) {}
         landmarkerRef.current = null;
       }
     };
@@ -144,7 +141,7 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
           streamRef.current = null;
         }
 
-        const targetDeviceId = deviceId || selectedCameraId;
+        const targetDeviceId = deviceId || selectedCameraIdRef.current;
 
         const constraints: MediaStreamConstraints = {
           video: {
@@ -178,7 +175,7 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
         }
 
         setIsCameraActive(true);
-        await refreshCameraDevices();
+        refreshCameraDevices();
       } catch (err: any) {
         console.error('[useHandLandmarker] Camera access error:', err);
         let msg = 'Izin kamera ditolak atau kamera tidak dapat diakses.';
@@ -191,7 +188,7 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
         setIsCameraActive(false);
       }
     },
-    [selectedCameraId, refreshCameraDevices]
+    [refreshCameraDevices]
   );
 
   // Stop Camera
@@ -214,19 +211,19 @@ export function useHandLandmarker(options: UseHandLandmarkerOptions = {}) {
   const switchCamera = useCallback(
     async (deviceId: string) => {
       setSelectedCameraId(deviceId);
-      if (isCameraActive) {
-        await startCamera(deviceId);
-      }
+      selectedCameraIdRef.current = deviceId;
+      startCamera(deviceId);
     },
-    [isCameraActive, startCamera]
+    [startCamera]
   );
 
-  // Auto start camera if enabled and model is ready
+  // Auto start camera safely once when model is ready
   useEffect(() => {
-    if (autoStartCamera && isModelReady && !isCameraActive) {
+    if (autoStartCamera && isModelReady && !hasAutoStartedRef.current) {
+      hasAutoStartedRef.current = true;
       startCamera();
     }
-  }, [autoStartCamera, isModelReady, isCameraActive, startCamera]);
+  }, [autoStartCamera, isModelReady, startCamera]);
 
   // Execute single detection frame
   const detectHands = useCallback(

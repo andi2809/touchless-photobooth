@@ -1,3 +1,5 @@
+export type { FrameSlot, FrameTemplate } from '@/config/frameTemplates';
+
 export interface NormalizedLandmark {
   x: number;
   y: number;

@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false, // Prevents duplicate camera/MediaPipe init cycles in development
+  turbopack: {},
   webpack: (config, { isServer }) => {
     // Enable WebAssembly support
     config.experiments = {
