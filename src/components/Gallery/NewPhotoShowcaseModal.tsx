@@ -42,14 +42,10 @@ export const NewPhotoShowcaseModal: React.FC<NewPhotoShowcaseModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
 
   const onPlaySuccessSoundRef = useRef(onPlaySuccessSound);
-  useEffect(() => {
-    onPlaySuccessSoundRef.current = onPlaySuccessSound;
-  }, [onPlaySuccessSound]);
+  onPlaySuccessSoundRef.current = onPlaySuccessSound;
 
   const onDismissRef = useRef(onDismiss);
-  useEffect(() => {
-    onDismissRef.current = onDismiss;
-  }, [onDismiss]);
+  onDismissRef.current = onDismiss;
 
   // Trigger celebration confetti
   const triggerConfetti = useCallback(() => {
@@ -104,6 +100,7 @@ export const NewPhotoShowcaseModal: React.FC<NewPhotoShowcaseModalProps> = ({
 
     const startTime = Date.now();
     const DURATION_MS = 2200; // 2.2 seconds simulated dummy upload
+    let finishTimeoutId: NodeJS.Timeout | null = null;
 
     const interval = setInterval(() => {
       const elapsed = Date.now() - startTime;
@@ -123,7 +120,7 @@ export const NewPhotoShowcaseModal: React.FC<NewPhotoShowcaseModalProps> = ({
 
       if (pct >= 100) {
         clearInterval(interval);
-        setTimeout(() => {
+        finishTimeoutId = setTimeout(() => {
           setPhase('SHOWCASE');
           if (onPlaySuccessSoundRef.current) {
             try {
@@ -135,26 +132,28 @@ export const NewPhotoShowcaseModal: React.FC<NewPhotoShowcaseModalProps> = ({
       }
     }, 40);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (finishTimeoutId) clearTimeout(finishTimeoutId);
+    };
   }, [currentPhotoId, autoDismissSeconds, triggerConfetti]);
 
-  // 10-Second Countdown timer in SHOWCASE phase
+  // 1-Minute Countdown timer in SHOWCASE phase
+  // Note: onDismiss is triggered via useEffect when timeLeft reaches 0, NOT inside setTimeLeft updater
   useEffect(() => {
     if (!photo || phase !== 'SHOWCASE' || isPaused) return;
 
+    if (timeLeft <= 0) {
+      onDismissRef.current();
+      return;
+    }
+
     const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onDismissRef.current();
-          return 0;
-        }
-        return prev - 1;
-      });
+      setTimeLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [photo, phase, isPaused]);
+  }, [photo, phase, isPaused, timeLeft]);
 
   const handleCopyLink = () => {
     if (navigator.clipboard) {
