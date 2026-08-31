@@ -464,6 +464,16 @@ export class GestureStabilizer {
   private lastEmittedTime = 0;
   private swipeTracker = new SwipeTracker();
 
+  // ── Release-to-Rearm: prevents navigation gestures from rapid re-triggering ──
+  // After THUMBS_DOWN fires, the user MUST return to a neutral/different gesture
+  // for at least REARM_NEUTRAL_MS before THUMBS_DOWN can fire again.
+  private static readonly REARM_GESTURES: ReadonlySet<NormalizedGestureType> = new Set([
+    'THUMBS_DOWN',
+  ]);
+  private static readonly REARM_NEUTRAL_MS = 600; // Must hold non-THUMBS_DOWN for 600ms to rearm
+  private rearmLockedGesture: NormalizedGestureType | null = null;
+  private rearmNeutralSince = 0; // Timestamp when stable gesture first diverged from locked gesture
+
   public processFrame(
     allHands: NormalizedLandmark[][],
     timestamp: number
@@ -481,6 +491,9 @@ export class GestureStabilizer {
       this.gestureHistory = [];
       this.lastEmittedGesture = swipe;
       this.lastEmittedTime = timestamp;
+      // Swipe clears any navigation rearm lock since user is clearly doing something different
+      this.rearmLockedGesture = null;
+      this.rearmNeutralSince = 0;
       return {
         activeContinuousGesture: swipe,
         confidence: 0.95,
@@ -533,14 +546,43 @@ export class GestureStabilizer {
       this.currentStableGesture = dominantGesture;
     }
 
-    // 5. Edge-Triggered Event Emission
+    // 5. Release-to-Rearm: manage navigation gesture lockout
+    if (this.rearmLockedGesture) {
+      if (this.currentStableGesture !== this.rearmLockedGesture) {
+        // User has moved away from the locked gesture — start/continue neutral timer
+        if (this.rearmNeutralSince === 0) {
+          this.rearmNeutralSince = timestamp;
+        }
+        if (timestamp - this.rearmNeutralSince >= GestureStabilizer.REARM_NEUTRAL_MS) {
+          // Sufficient neutral hold time — unlock the gesture for rearming
+          this.rearmLockedGesture = null;
+          this.rearmNeutralSince = 0;
+        }
+      } else {
+        // User is still showing the locked gesture — reset neutral timer
+        this.rearmNeutralSince = 0;
+      }
+    }
+
+    // 6. Edge-Triggered Event Emission
     if (this.currentStableGesture !== 'IDLE') {
       const isNewGesture = this.currentStableGesture !== this.lastEmittedGesture;
 
-      // ONLY emit on gesture CHANGE, never on re-hold
-      if (isNewGesture) {
+      // Block emission if this gesture is currently locked by the rearm system
+      const isRearmLocked =
+        GestureStabilizer.REARM_GESTURES.has(this.currentStableGesture) &&
+        this.rearmLockedGesture === this.currentStableGesture;
+
+      // ONLY emit on gesture CHANGE, never on re-hold, and never while rearm-locked
+      if (isNewGesture && !isRearmLocked) {
         this.lastEmittedGesture = this.currentStableGesture;
         this.lastEmittedTime = timestamp;
+
+        // Lock navigation gestures after emission to require release-to-rearm
+        if (GestureStabilizer.REARM_GESTURES.has(this.currentStableGesture)) {
+          this.rearmLockedGesture = this.currentStableGesture;
+          this.rearmNeutralSince = 0;
+        }
 
         return {
           activeContinuousGesture: this.currentStableGesture,
@@ -570,6 +612,8 @@ export class GestureStabilizer {
     this.currentStableGesture = 'IDLE';
     this.lastEmittedGesture = 'IDLE';
     this.lastEmittedTime = 0;
+    this.rearmLockedGesture = null;
+    this.rearmNeutralSince = 0;
     this.swipeTracker.reset();
   }
 }

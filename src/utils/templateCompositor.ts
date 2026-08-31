@@ -46,20 +46,25 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
  */
 async function resolvePhotoElement(
   photo: PhotoInput
-): Promise<{ element: CanvasImageSource; width: number; height: number }> {
+): Promise<{ element: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
   if (typeof photo === 'string') {
     const img = await loadImage(photo);
-    return { element: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height };
+    return { 
+      element: img, 
+      width: img.naturalWidth || img.width, 
+      height: img.naturalHeight || img.height,
+      cleanup: () => { img.src = ''; } // Aggressively free decoded bitmap memory
+    };
   }
 
   if (photo instanceof HTMLVideoElement) {
     const width = photo.videoWidth || photo.width || 1280;
     const height = photo.videoHeight || photo.height || 720;
-    return { element: photo, width, height };
+    return { element: photo, width, height, cleanup: () => {} };
   }
 
   if (photo instanceof HTMLCanvasElement) {
-    return { element: photo, width: photo.width, height: photo.height };
+    return { element: photo, width: photo.width, height: photo.height, cleanup: () => {} };
   }
 
   if (photo instanceof HTMLImageElement) {
@@ -71,7 +76,7 @@ async function resolvePhotoElement(
     }
     const width = photo.naturalWidth || photo.width;
     const height = photo.naturalHeight || photo.height;
-    return { element: photo, width, height };
+    return { element: photo, width, height, cleanup: () => {} };
   }
 
   throw new Error('Unsupported photo input type for template compositor');
@@ -119,31 +124,37 @@ export async function renderPhotoToSlot(
   photoInput: PhotoInput,
   slot: FrameSlot
 ): Promise<void> {
-  const { element, width: srcW, height: srcH } = await resolvePhotoElement(photoInput);
-  const { sx, sy, sWidth, sHeight } = computeCoverCrop(srcW, srcH, slot.width, slot.height);
+  const { element, width: srcW, height: srcH, cleanup } = await resolvePhotoElement(photoInput);
+  
+  try {
+    const { sx, sy, sWidth, sHeight } = computeCoverCrop(srcW, srcH, slot.width, slot.height);
 
-  ctx.save();
-  ctx.beginPath();
-  if (slot.borderRadius && slot.borderRadius > 0 && typeof ctx.roundRect === 'function') {
-    ctx.roundRect(slot.x, slot.y, slot.width, slot.height, slot.borderRadius);
-  } else {
-    ctx.rect(slot.x, slot.y, slot.width, slot.height);
+    ctx.save();
+    ctx.beginPath();
+    if (slot.borderRadius && slot.borderRadius > 0 && typeof ctx.roundRect === 'function') {
+      ctx.roundRect(slot.x, slot.y, slot.width, slot.height, slot.borderRadius);
+    } else {
+      ctx.rect(slot.x, slot.y, slot.width, slot.height);
+    }
+    ctx.clip();
+
+    ctx.drawImage(
+      element,
+      sx,
+      sy,
+      sWidth,
+      sHeight,
+      slot.x,
+      slot.y,
+      slot.width,
+      slot.height
+    );
+
+    ctx.restore();
+  } finally {
+    // Free image memory immediately after drawing, even if an error occurred
+    cleanup();
   }
-  ctx.clip();
-
-  ctx.drawImage(
-    element,
-    sx,
-    sy,
-    sWidth,
-    sHeight,
-    slot.x,
-    slot.y,
-    slot.width,
-    slot.height
-  );
-
-  ctx.restore();
 }
 
 /**
@@ -229,46 +240,57 @@ export async function compositePhotoboothStrip(
   canvas.width = template.width;
   canvas.height = template.height;
 
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) {
-    throw new Error('Failed to create 2D canvas context for photobooth compositor.');
-  }
-
-  // 2. Fill background
-  ctx.fillStyle = backgroundColor;
-  ctx.fillRect(0, 0, template.width, template.height);
-
-  // 3. Render each of the 3 photos into their respective slots (Bottom layer)
-  for (let i = 0; i < 3; i++) {
-    const photo = photos[i];
-    const slot = template.slots[i];
-    if (photo && slot) {
-      await renderPhotoToSlot(ctx, photo, slot);
-    }
-  }
-
-  // 4. Load & Overlay Frame Template Artwork (Top layer)
   try {
-    const frameImg = await loadImage(template.assetPath);
-    ctx.drawImage(frameImg, 0, 0, template.width, template.height);
-  } catch (err) {
-    console.error(`[templateCompositor] Failed to load frame overlay ${template.assetPath}:`, err);
-    throw new Error(`Failed to load frame asset: ${template.fileName}`);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      throw new Error('Failed to create 2D canvas context for photobooth compositor.');
+    }
+
+    // 2. Fill background
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, template.width, template.height);
+
+    // 3. Render each of the 3 photos into their respective slots (Bottom layer)
+    for (let i = 0; i < 3; i++) {
+      const photo = photos[i];
+      const slot = template.slots[i];
+      if (photo && slot) {
+        await renderPhotoToSlot(ctx, photo, slot);
+      }
+    }
+
+    // 4. Load & Overlay Frame Template Artwork (Top layer)
+    let frameImg: HTMLImageElement | null = null;
+    try {
+      frameImg = await loadImage(template.assetPath);
+      ctx.drawImage(frameImg, 0, 0, template.width, template.height);
+    } catch (err) {
+      console.error(`[templateCompositor] Failed to load frame overlay ${template.assetPath}:`, err);
+      throw new Error(`Failed to load frame asset: ${template.fileName}`);
+    } finally {
+      if (frameImg) {
+        frameImg.src = ''; // Aggressive memory release for frame asset
+      }
+    }
+
+    // 5. Optional Debug Overlay
+    if (debugOverlay) {
+      renderDebugSlotOverlay(ctx, template);
+    }
+
+    // 6. Export full-resolution image
+    const dataUrl = canvas.toDataURL(mimeType, quality);
+
+    return {
+      dataUrl,
+      width: template.width,
+      height: template.height,
+      mimeType,
+      timestamp: Date.now(),
+    };
+  } finally {
+    // Free main compositor canvas memory immediately, regardless of success or error
+    canvas.width = 0;
+    canvas.height = 0;
   }
-
-  // 5. Optional Debug Overlay
-  if (debugOverlay) {
-    renderDebugSlotOverlay(ctx, template);
-  }
-
-  // 6. Export full-resolution image
-  const dataUrl = canvas.toDataURL(mimeType, quality);
-
-  return {
-    dataUrl,
-    width: template.width,
-    height: template.height,
-    mimeType,
-    timestamp: Date.now(),
-  };
 }

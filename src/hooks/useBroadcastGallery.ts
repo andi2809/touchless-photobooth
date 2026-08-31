@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CapturedPhoto, BroadcastPayload } from '@/types/photobooth';
+import { saveGalleryPhotos, loadGalleryPhotos, clearGalleryPhotos } from '@/utils/idbStorage';
 
 const CHANNEL_NAME = 'booth_gallery';
-const STORAGE_KEY = 'touchless_photobooth_gallery_v1';
 const MAX_PHOTOS_LIMIT = 48;
 
 export function useBroadcastGallery() {
@@ -13,28 +13,20 @@ export function useBroadcastGallery() {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const channelRef = useRef<BroadcastChannel | null>(null);
 
-  // Load photos from LocalStorage on mount
+  // Load photos from IndexedDB on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setPhotos(parsed);
-        }
+    let mounted = true;
+    loadGalleryPhotos().then((storedPhotos) => {
+      if (mounted && Array.isArray(storedPhotos) && storedPhotos.length > 0) {
+        setPhotos(storedPhotos);
       }
-    } catch (e) {
-      console.warn('[useBroadcastGallery] Failed to load photos from LocalStorage:', e);
-    }
+    });
+    return () => { mounted = false; };
   }, []);
 
-  // Save photos to LocalStorage on change
+  // Save photos to IndexedDB on change
   const savePhotosToStorage = useCallback((updatedPhotos: CapturedPhoto[]) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedPhotos.slice(0, MAX_PHOTOS_LIMIT)));
-    } catch (e) {
-      console.warn('[useBroadcastGallery] Failed to save photos to LocalStorage:', e);
-    }
+    saveGalleryPhotos(updatedPhotos.slice(0, MAX_PHOTOS_LIMIT));
   }, []);
 
   // Setup BroadcastChannel
@@ -94,12 +86,21 @@ export function useBroadcastGallery() {
           }
           break;
 
+        case 'DELETE_SINGLE_PHOTO':
+          if (payload.photoId) {
+            setPhotos((prev) => {
+              const next = prev.filter((p) => p.id !== payload.photoId);
+              savePhotosToStorage(next);
+              return next;
+            });
+            setLatestPhoto((prev) => (prev?.id === payload.photoId ? null : prev));
+          }
+          break;
+
         case 'CLEAR_ALL_PHOTOS':
           setPhotos([]);
           setLatestPhoto(null);
-          try {
-            localStorage.removeItem(STORAGE_KEY);
-          } catch (e) {}
+          clearGalleryPhotos();
           break;
       }
     };
@@ -146,9 +147,7 @@ export function useBroadcastGallery() {
   const clearAllPhotos = useCallback(() => {
     setPhotos([]);
     setLatestPhoto(null);
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {}
+    clearGalleryPhotos();
 
     if (channelRef.current) {
       channelRef.current.postMessage({
@@ -166,6 +165,19 @@ export function useBroadcastGallery() {
         savePhotosToStorage(next);
         return next;
       });
+      setLatestPhoto((prev) => (prev?.id === id ? null : prev));
+
+      if (channelRef.current) {
+        try {
+          channelRef.current.postMessage({
+            type: 'DELETE_SINGLE_PHOTO',
+            photoId: id,
+            timestamp: Date.now(),
+          });
+        } catch (e) {
+          console.error('[useBroadcastGallery] Failed to post DELETE_SINGLE_PHOTO:', e);
+        }
+      }
     },
     [savePhotosToStorage]
   );

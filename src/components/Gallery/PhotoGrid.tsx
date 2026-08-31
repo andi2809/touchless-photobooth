@@ -7,6 +7,7 @@ import { Download, Trash2, X, Sparkles, Heart, Eye } from 'lucide-react';
 interface PhotoGridProps {
   photos: CapturedPhoto[];
   onDeletePhoto?: (id: string) => void;
+  onRequestDeletePhoto?: (photo: CapturedPhoto) => void;
 }
 
 // Alternating natural scrapbook tilt rotations
@@ -28,7 +29,11 @@ const STICKER_ACCENTS = [
   '/assets/decorations/sparkle_star_purple.png',
 ];
 
-export const PhotoGrid: React.FC<PhotoGridProps> = ({ photos, onDeletePhoto }) => {
+export const PhotoGrid: React.FC<PhotoGridProps> = ({
+  photos,
+  onDeletePhoto,
+  onRequestDeletePhoto,
+}) => {
   const [selectedPhoto, setSelectedPhoto] = useState<CapturedPhoto | null>(null);
 
   const handleDownload = (photo: CapturedPhoto, e?: React.MouseEvent) => {
@@ -39,6 +44,15 @@ export const PhotoGrid: React.FC<PhotoGridProps> = ({ photos, onDeletePhoto }) =
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDeleteClick = (photo: CapturedPhoto, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (onRequestDeletePhoto) {
+      onRequestDeletePhoto(photo);
+    } else if (onDeletePhoto) {
+      onDeletePhoto(photo.id);
+    }
   };
 
   if (photos.length === 0) {
@@ -113,30 +127,27 @@ export const PhotoGrid: React.FC<PhotoGridProps> = ({ photos, onDeletePhoto }) =
                 />
 
                 {/* Hover Quick Action Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-2">
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-2">
                   <span className="text-[9px] font-mono text-amber-300 font-bold truncate max-w-[80px]">
                     {photo.id}
                   </span>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
+                    {/* Individual Download */}
                     <button
                       onClick={(e) => handleDownload(photo, e)}
                       title="Unduh Strip Foto HD"
-                      className="p-1.5 rounded-lg bg-pink-400 hover:bg-pink-300 text-slate-950 transition shadow font-bold"
+                      className="p-1.5 rounded-lg bg-pink-400 hover:bg-pink-300 text-slate-950 transition shadow font-bold hover:scale-105 active:scale-95"
                     >
-                      <Download className="w-3 h-3" />
+                      <Download className="w-3.5 h-3.5" />
                     </button>
-                    {onDeletePhoto && (
+                    {/* Individual Single Delete */}
+                    {(onRequestDeletePhoto || onDeletePhoto) && (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm(`Hapus foto ${photo.id}?`)) {
-                            onDeletePhoto(photo.id);
-                          }
-                        }}
-                        title="Hapus"
-                        className="p-1.5 rounded-lg bg-red-500 hover:bg-red-400 text-white transition shadow"
+                        onClick={(e) => handleDeleteClick(photo, e)}
+                        title="Hapus Foto Ini (Single Delete)"
+                        className="p-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white transition shadow hover:scale-105 active:scale-95 border border-red-700"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
@@ -194,23 +205,42 @@ export const PhotoGrid: React.FC<PhotoGridProps> = ({ photos, onDeletePhoto }) =
               />
             </div>
 
-            {/* Modal Info & Download Action */}
-            <div className="w-full flex items-center justify-between px-1 pt-2 border-t border-slate-300/80">
-              <div>
-                <h4 className="text-xs sm:text-sm font-black text-slate-900 font-mono">
+            {/* Modal Info & Actions */}
+            <div className="w-full flex items-center justify-between px-1 pt-2 border-t border-slate-300/80 gap-2">
+              <div className="overflow-hidden">
+                <h4 className="text-xs sm:text-sm font-black text-slate-900 font-mono truncate">
                   {selectedPhoto.id}
                 </h4>
                 <p className="text-[11px] text-slate-500 font-medium">
                   {selectedPhoto.formattedTime} WIB
                 </p>
               </div>
-              <button
-                onClick={() => handleDownload(selectedPhoto)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-pink-400 hover:bg-pink-500 text-slate-950 font-black text-xs border-2 border-slate-900 shadow transition transform hover:scale-105"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Unduh File HD</span>
-              </button>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Individual Delete inside Lightbox */}
+                {(onRequestDeletePhoto || onDeletePhoto) && (
+                  <button
+                    onClick={() => {
+                      const photoToDelete = selectedPhoto;
+                      setSelectedPhoto(null);
+                      handleDeleteClick(photoToDelete);
+                    }}
+                    title="Hapus foto ini"
+                    className="p-2 rounded-full bg-red-100 hover:bg-red-200 text-red-700 border-2 border-slate-900 transition shadow-sm"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+
+                {/* Download in Lightbox */}
+                <button
+                  onClick={() => handleDownload(selectedPhoto)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-pink-400 hover:bg-pink-500 text-slate-950 font-black text-xs border-2 border-slate-900 shadow transition transform hover:scale-105"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh HD</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

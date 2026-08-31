@@ -37,6 +37,8 @@ export interface PhotoSession {
   currentPhotoIndex: number; // 0 = photo 1, 1 = photo 2, 2 = photo 3
   finalComposite: CompositeStripResult | null;
   cloudUrl?: string;
+  uploadStatus?: 'PENDING' | 'SUCCESS' | 'FAILED';
+  uploadError?: string;
   startedAt: number;
 }
 

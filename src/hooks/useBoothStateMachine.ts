@@ -16,12 +16,14 @@ import {
   compositePhotoboothStrip,
   CompositeStripResult,
 } from '@/utils/templateCompositor';
+import { uploadToGoogleDrive } from '@/utils/googleDriveUploader';
 import { useSoundEffects } from './useSoundEffects';
 import { useBroadcastGallery } from './useBroadcastGallery';
 
 const COUNTDOWN_SECONDS = 3;
 const RESULT_AUTO_RESET_SECONDS = 12;
 const TRANSITION_COOLDOWN_MS = 400; // Snappy 400ms transition lock
+const BACK_NAVIGATION_COOLDOWN_MS = 1800; // 1.8s dedicated cooldown after THUMBS_DOWN back action
 
 // Static frame templates list
 const STATIC_FRAME_TEMPLATES = getAllFrameTemplates();
@@ -62,6 +64,7 @@ export function useBoothStateMachine(
 
   const guideOpenedAtRef = useRef<number>(0);
   const transitionLockUntilRef = useRef<number>(0);
+  const backNavLockUntilRef = useRef<number>(0); // Dedicated THUMBS_DOWN back-navigation cooldown
 
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
   const autoResetTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -127,17 +130,25 @@ export function useBoothStateMachine(
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
+    
+    let dataUrl = '';
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
 
-    // Draw video mirrored horizontally for natural selfie perspective
-    ctx.save();
-    ctx.translate(width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, width, height);
-    ctx.restore();
+      // Draw video mirrored horizontally for natural selfie perspective
+      ctx.save();
+      ctx.translate(width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, width, height);
+      ctx.restore();
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+    
     const now = new Date();
     const photoId = `PHOTO-${sessionRef.current.currentPhotoIndex + 1}-${Date.now().toString(36).toUpperCase()}`;
 
@@ -183,13 +194,13 @@ export function useBoothStateMachine(
       setSession((prev) => ({
         ...prev,
         finalComposite: compositeResult,
+        uploadStatus: 'PENDING',
       }));
 
-      // Transition to UPLOADING and Broadcast
-      setState('UPLOADING');
+      // Broadcast to Monitor 2
       broadcastPhoto(finalCapturedStrip);
 
-      // Transition to RESULT
+      // Transition to RESULT immediately so user doesn't wait
       transitionTo('RESULT');
 
       // Schedule Auto-Reset
@@ -198,12 +209,53 @@ export function useBoothStateMachine(
         resetSession();
       }, RESULT_AUTO_RESET_SECONDS * 1000);
 
+      // Fire and forget upload
+      executeUpload(compositeResult, now.getTime());
+
     } catch (err: any) {
       console.error('[useBoothStateMachine] Compositing error:', err);
       setErrorMessage(err.message || 'Gagal membuat strip foto photobooth.');
       transitionTo('READY');
     }
   }, [soundEffects, broadcastPhoto, resetSession, transitionTo]);
+
+  const executeUpload = useCallback((compositeResult: CompositeStripResult, timestamp: number) => {
+    setSession((prev) => ({
+      ...prev,
+      uploadStatus: 'PENDING',
+      uploadError: undefined,
+    }));
+    
+    uploadToGoogleDrive(compositeResult, `PTIK-Photo-${timestamp}.png`)
+      .then((response) => {
+        if (response.success) {
+          setSession((prev) => ({
+            ...prev,
+            uploadStatus: 'SUCCESS',
+            cloudUrl: response.fileUrl,
+          }));
+        } else {
+          setSession((prev) => ({
+            ...prev,
+            uploadStatus: 'FAILED',
+            uploadError: response.error,
+          }));
+        }
+      })
+      .catch((err) => {
+        setSession((prev) => ({
+          ...prev,
+          uploadStatus: 'FAILED',
+          uploadError: err.message,
+        }));
+      });
+  }, []);
+
+  const retryUploadManually = useCallback(() => {
+    if (sessionRef.current.finalComposite && sessionRef.current.uploadStatus === 'FAILED') {
+      executeUpload(sessionRef.current.finalComposite, Date.now());
+    }
+  }, [executeUpload]);
 
   // Start 3..2..1 Countdown for current photo
   const startCountdown = useCallback(() => {
@@ -291,6 +343,12 @@ export function useBoothStateMachine(
         return; // Ignore gesture while transitioning between major states
       }
 
+      // 2b. Dedicated Back-Navigation Cooldown (1.8s) for THUMBS_DOWN
+      // Prevents multi-trigger when user holds thumbs down through state transitions
+      if (event.type === 'THUMBS_DOWN' && now < backNavLockUntilRef.current) {
+        return; // Back-navigation cooldown still active — ignore this THUMBS_DOWN
+      }
+
       // 3. Gesture Guide Modal Handling
       if (isGuideOpenRef.current) {
         // When Guide is open: Explicit close triggers
@@ -343,28 +401,66 @@ export function useBoothStateMachine(
             updateTemplateIndex(templateIndexRef.current + 1);
           } else if (event.type === 'OK_SIGN') {
             // Confirm Frame with OK Sign (👌)
+            // Always reset captured photos when (re-)entering capture flow
+            // This fixes the bug where old photos persist after back-navigating to frame selection
             soundEffects.playFrameLock();
+            setSession((prev) => ({
+              ...prev,
+              photos: [],
+              currentPhotoIndex: 0,
+              finalComposite: null,
+            }));
             transitionTo('READY');
           } else if (event.type === 'THUMBS_DOWN') {
             // Global Back to IDLE
             soundEffects.playClearChime();
+            backNavLockUntilRef.current = now + BACK_NAVIGATION_COOLDOWN_MS;
             resetSession();
           }
           break;
 
-        case 'READY':
+        case 'READY': {
           if (event.type === 'PEACE') {
             startCountdown();
           } else if (event.type === 'THUMBS_DOWN') {
-            // Global Back to FRAME_SELECTION
+            const currentIdx = sessionRef.current.currentPhotoIndex;
+            const currentPhotos = sessionRef.current.photos;
+
             soundEffects.playClearChime();
-            transitionTo('FRAME_SELECTION');
+            backNavLockUntilRef.current = now + BACK_NAVIGATION_COOLDOWN_MS;
+
+            if (currentIdx > 0 && currentPhotos.length > 0) {
+              // Step-by-step Undo: remove last photo, go back to retake the previous one
+              // e.g. on photo 3 (idx=2) → remove photo 2, set idx=1 → retake photo 2
+              const previousIdx = currentIdx - 1;
+              const rolledBackPhotos = currentPhotos.slice(0, previousIdx);
+              setSession((prev) => ({
+                ...prev,
+                photos: rolledBackPhotos,
+                currentPhotoIndex: previousIdx,
+              }));
+              // Stay in READY for retake — apply transition cooldown to re-render UI
+              transitionLockUntilRef.current = now + TRANSITION_COOLDOWN_MS;
+            } else {
+              // On photo 1 (idx=0): go back to Frame Selection, reset all photos
+              setSession((prev) => ({
+                ...prev,
+                photos: [],
+                currentPhotoIndex: 0,
+                finalComposite: null,
+              }));
+              transitionTo('FRAME_SELECTION');
+            }
           }
           break;
+        }
 
         case 'RESULT':
           if (event.type === 'THUMBS_DOWN' || event.type === 'OPEN_PALM') {
             soundEffects.playClearChime();
+            if (event.type === 'THUMBS_DOWN') {
+              backNavLockUntilRef.current = now + BACK_NAVIGATION_COOLDOWN_MS;
+            }
             resetSession();
           }
           break;
@@ -418,6 +514,7 @@ export function useBoothStateMachine(
     selectPrevFrame,
     confirmFrameManually,
     triggerPeaceManually,
+    retryUploadManually,
     soundEffects,
   };
 }

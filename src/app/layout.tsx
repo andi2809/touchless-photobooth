@@ -5,6 +5,10 @@ export const metadata: Metadata = {
 	title: "PTIK BEMP Touchless Interactive Photobooth",
 	description:
 		"Aplikasi photobooth interaktif tanpa sentuh berbasis MediaPipe AI dan Dual-Monitor Sync untuk Pameran BEMP PTI UNJ.",
+	icons: {
+		icon: "/icon.png",
+		apple: "/icon.png",
+	},
 };
 
 export const viewport: Viewport = {

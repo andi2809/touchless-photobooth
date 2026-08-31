@@ -6,11 +6,13 @@ import { Download, RotateCcw, ExternalLink } from 'lucide-react';
 interface ResultViewProps {
   finalComposite: CompositeStripResult;
   onReset: () => void;
+  uploadStatus?: 'PENDING' | 'SUCCESS' | 'FAILED';
 }
 
 export const ResultView: React.FC<ResultViewProps> = ({
   finalComposite,
   onReset,
+  uploadStatus,
 }) => {
   const shortlink = 'https://s.id/ptik-photobooth';
 
@@ -64,10 +66,34 @@ export const ResultView: React.FC<ResultViewProps> = ({
           </a>
 
           {/* QR Code */}
-          <div className="flex items-center gap-3 w-full bg-white p-2.5 rounded-2xl border border-blue-200 shadow-sm">
-            <QRCodeDisplay url={shortlink} size={70} className="shrink-0" />
-            <div className="text-left text-[11px] font-bold text-slate-700 leading-tight">
-              Scan QR Code untuk simpan foto ke smartphone kamu!
+          <div className="flex flex-col gap-2 w-full">
+            <div className="flex items-center gap-3 w-full bg-white p-2.5 rounded-2xl border border-blue-200 shadow-sm">
+              <QRCodeDisplay url={shortlink} size={70} className="shrink-0" />
+              <div className="text-left text-[11px] font-bold text-slate-700 leading-tight">
+                Scan QR Code untuk simpan foto ke smartphone kamu!
+              </div>
+            </div>
+            
+            {/* Upload Status */}
+            <div className="text-[10px] font-bold px-2 flex items-center justify-center gap-1.5 opacity-80">
+              {uploadStatus === 'PENDING' && (
+                <>
+                  <div className="w-2 h-2 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                  <span className="text-blue-600">Mengunggah ke Cloud...</span>
+                </>
+              )}
+              {uploadStatus === 'SUCCESS' && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-emerald-700">Tersedia di Cloud!</span>
+                </>
+              )}
+              {uploadStatus === 'FAILED' && (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-red-500" />
+                  <span className="text-red-600">Gagal mengunggah foto.</span>
+                </>
+              )}
             </div>
           </div>
         </div>

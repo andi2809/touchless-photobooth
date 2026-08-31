@@ -99,12 +99,14 @@ export type BroadcastMessageType =
   | 'PHOTO_CAPTURED'
   | 'REQUEST_GALLERY_SYNC'
   | 'GALLERY_SYNC_RESPONSE'
+  | 'DELETE_SINGLE_PHOTO'
   | 'CLEAR_ALL_PHOTOS';
 
 export interface BroadcastPayload {
   type: BroadcastMessageType;
   photo?: CapturedPhoto;
   photos?: CapturedPhoto[];
+  photoId?: string;
   timestamp: number;
 }
 

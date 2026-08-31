@@ -23,9 +23,11 @@ import {
   Camera,
   Activity,
 } from 'lucide-react';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { DesktopBlockerOverlay } from '@/components/DesktopBlockerOverlay';
 import Link from 'next/link';
 
-export default function PhotoboothPage() {
+function PhotoboothContent() {
   // 1. MediaPipe AI & Camera Stream Hook
   const {
     isLoading,
@@ -60,6 +62,7 @@ export default function PhotoboothPage() {
     selectPrevFrame,
     confirmFrameManually,
     triggerPeaceManually,
+    retryUploadManually,
     soundEffects,
   } = useBoothStateMachine(videoRef, isGuideOpen, setIsGuideOpen);
 
@@ -74,6 +77,8 @@ export default function PhotoboothPage() {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showSkeleton, setShowSkeleton] = useState<boolean>(true);
   const [showDevDebug, setShowDevDebug] = useState<boolean>(false);
+  const showDevDebugRef = useRef<boolean>(showDevDebug);
+  useEffect(() => { showDevDebugRef.current = showDevDebug; }, [showDevDebug]);
 
   const lastDebugUpdateRef = useRef<number>(0);
 
@@ -105,7 +110,7 @@ export default function PhotoboothPage() {
         }
 
         // Throttle debug HUD state updates to 4 times a second (250ms) to eliminate React re-render overhead
-        if (timestamp - lastDebugUpdateRef.current >= 250) {
+        if (showDevDebugRef.current && timestamp - lastDebugUpdateRef.current >= 250) {
           lastDebugUpdateRef.current = timestamp;
           setActiveContinuousGesture(result.activeContinuousGesture);
           setGestureConfidence(result.confidence);
@@ -146,6 +151,8 @@ export default function PhotoboothPage() {
         setShowDevDebug((prev) => !prev);
       } else if (e.code === 'KeyS') {
         setShowSkeleton((prev) => !prev);
+      } else if (e.code === 'KeyR') {
+        retryUploadManually();
       }
     };
 
@@ -159,6 +166,7 @@ export default function PhotoboothPage() {
     confirmFrameManually,
     triggerPeaceManually,
     resetSession,
+    retryUploadManually,
   ]);
 
   // Dynamic Header Title based on state
@@ -358,6 +366,7 @@ export default function PhotoboothPage() {
           <ResultView
             finalComposite={session.finalComposite}
             onReset={resetSession}
+            uploadStatus={session.uploadStatus}
           />
         )}
       </div>
@@ -423,13 +432,45 @@ export default function PhotoboothPage() {
               <span className="font-bold text-slate-800">{(gestureConfidence * 100).toFixed(0)}%</span>
             </div>
             <div className="flex justify-between">
+              <span>Camera Status:</span>
+              <span className={`font-bold ${isCameraActive ? 'text-emerald-600' : 'text-red-600'}`}>
+                {isCameraActive ? 'ACTIVE' : 'ERROR/OFF'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>MediaPipe:</span>
+              <span className={`font-bold ${isModelReady ? 'text-emerald-600' : 'text-amber-500'}`}>
+                {isModelReady ? 'READY' : 'LOADING'}
+              </span>
+            </div>
+            <div className="flex justify-between">
               <span>Current State:</span>
               <span className="font-bold text-blue-600">{state}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Photo Index:</span>
+              <span className="font-bold text-slate-800">{session.currentPhotoIndex + 1} / 3</span>
             </div>
             <div className="flex justify-between">
               <span>Current Frame:</span>
               <span className="truncate max-w-[120px] font-bold text-slate-900">{currentTemplate.name}</span>
             </div>
+            {session.uploadStatus && (
+              <div className="flex justify-between">
+                <span>Upload Status:</span>
+                <span className={`font-bold ${
+                  session.uploadStatus === 'SUCCESS' ? 'text-emerald-600' :
+                  session.uploadStatus === 'FAILED' ? 'text-red-600' : 'text-blue-600'
+                }`}>
+                  {session.uploadStatus}
+                </span>
+              </div>
+            )}
+            {session.uploadError && (
+              <div className="mt-1 p-1 bg-red-100 text-red-700 text-[9px] rounded line-clamp-2">
+                {session.uploadError}
+              </div>
+            )}
           </div>
 
           <div className="pt-2 border-t border-slate-200 text-[10px] text-slate-500 space-y-0.5">
@@ -439,6 +480,7 @@ export default function PhotoboothPage() {
             <div>⌨️ [Esc] Reset Sesi</div>
             <div>⌨️ [S] Toggle Skeleton Tangan</div>
             <div>⌨️ [D] Toggle Debug Panel</div>
+            <div>⌨️ [R] Retry Failed Upload</div>
           </div>
         </aside>
       )}
@@ -484,4 +526,33 @@ export default function PhotoboothPage() {
       )}
     </main>
   );
+}
+
+export default function PhotoboothPage() {
+  const { isDesktop, windowWidth, minWidth } = useIsDesktop(1024);
+
+  // During SSR or initial client mounting, display minimal dark placeholder to prevent hydration flash
+  if (isDesktop === null) {
+    return (
+      <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+        <div className="w-10 h-10 rounded-full border-3 border-pink-400/40 border-t-pink-400 animate-spin mb-3" />
+        <span className="text-xs font-mono text-slate-500">Memeriksa ukuran layar...</span>
+      </div>
+    );
+  }
+
+  // If Mobile or Small Screen (< 1024px), DO NOT MOUNT PhotoboothContent (saves 100% CPU/GPU & prevents camera prompt)
+  if (!isDesktop) {
+    return (
+      <DesktopBlockerOverlay
+        windowWidth={windowWidth}
+        minWidth={minWidth}
+        title="Layar Terlalu Kecil"
+        description="Aplikasi Touchless Photobooth ini dirancang khusus untuk layar Desktop atau Laptop dengan sistem deteksi gestur AI bebas sentuh."
+      />
+    );
+  }
+
+  // Desktop Screen (>= 1024px): Mount full photobooth app
+  return <PhotoboothContent />;
 }

@@ -8,19 +8,21 @@ interface QRCodeDisplayProps {
   size?: number;
   className?: string;
   showDoodleFrame?: boolean;
+  borderClassName?: string;
 }
 
 export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
   imageSrc = '/assets/qr/qr-ptik-photobooth.png',
-  size = 110,
+  size = 140,
   className = '',
   showDoodleFrame = false,
+  borderClassName = 'border-2 border-slate-900',
 }) => {
   return (
     <div className={`relative inline-flex items-center justify-center ${className}`}>
       {/* Optional Doodle Frame Overlay */}
       {showDoodleFrame && (
-        <div className="absolute -inset-3 pointer-events-none z-10">
+        <div className="absolute -inset-4 pointer-events-none z-10">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/assets/qr/qr_frame_doodle.png"
@@ -30,19 +32,20 @@ export const QRCodeDisplay: React.FC<QRCodeDisplayProps> = ({
         </div>
       )}
 
-      {/* QR Box */}
+      {/* QR Box with high contrast and clean shadow */}
       <div
         style={{ width: size, height: size }}
-        className="p-2 bg-white rounded-2xl shadow-md inline-flex items-center justify-center overflow-hidden border-2 border-slate-800"
+        className={`p-2.5 bg-white rounded-2xl sm:rounded-3xl shadow-[0_6px_20px_rgba(0,0,0,0.08)] inline-flex items-center justify-center overflow-hidden transition-all duration-300 ${borderClassName}`}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={imageSrc}
           alt="QR Code PTIK Photobooth"
-          className="w-full h-full object-contain rounded-lg"
+          className="w-full h-full object-contain rounded-xl"
         />
       </div>
     </div>
   );
 };
+
 
